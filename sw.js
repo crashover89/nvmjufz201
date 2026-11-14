@@ -1,5 +1,5 @@
 // Offline-Cache: zuerst Netz, sonst gespeicherte Kopie. Rechnungsdaten liegen nicht hier, sondern im Gerätespeicher.
-const C = "finanz-v2";
+const C = "finanz-v3";
 self.addEventListener("install", e => { self.skipWaiting(); e.waitUntil(caches.open(C).then(c => c.addAll(["./", "index.html", "icon.svg", "manifest.webmanifest"]).catch(()=>{}))); });
 self.addEventListener("activate", e => e.waitUntil(self.clients.claim()));
 self.addEventListener("fetch", e => {

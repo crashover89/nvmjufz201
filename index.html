@@ -516,7 +516,7 @@ function billCard(b){
   return `<div class="bill ${sel?"sel":""}">
     <button class="pick" style="--av:${catColor(b.cat)}" data-sel="${b.id}" aria-pressed="${sel}" aria-label="${esc(b.creditor)} auswählen"><span class="ini">${esc((b.creditor.trim()[0]||"?").toUpperCase())}</span><span class="ck">${ICON.check}</span></button>
     <div class="body" data-open="${b.id}"><div class="nm">${esc(b.creditor)}</div>
-      <div class="when"><span class="tag t-${s.k}">${s.label}</span><span>${wd(b.due)} ${fmtDs(b.due)}</span>${b.dueGuess?`<span class="tag t-warn">Datum prüfen</span>`:""}${b.sentAt?`<span class="tag t-good">bei UBS</span>`:""}${pay?`<span class="tag t-good">im Konto gesehen</span>`:""}${probs.length&&!b.sentAt?`<span class="tag t-calm">Angaben fehlen</span>`:""}</div></div>
+      <div class="when"><span class="tag t-${s.k}">${s.label}</span><span>${wd(b.due)} ${fmtDs(b.due)}</span>${b.dueGuess?`<span class="tag t-calm">ca. 30 Tage</span>`:""}${b.sentAt?`<span class="tag t-good">bei UBS</span>`:""}${pay?`<span class="tag t-good">im Konto gesehen</span>`:""}${probs.length&&!b.sentAt?`<span class="tag t-calm">Angaben fehlen</span>`:""}</div></div>
     <div class="amt n">${chf(b.amount)}</div></div>`;
 }
 function doneCard(b){
@@ -545,6 +545,7 @@ function showBill(id){
       ${b.town?`<span>Adresse</span><span>${esc([[b.street,b.nr].filter(Boolean).join(" "), [b.zip,b.town].filter(Boolean).join(" ")].filter(Boolean).join(", "))}</span>`:""}
       ${b.sentAt?`<span>An UBS</span><span>übergeben ${fmtD(b.sentAt)}${b.execAt?", Ausführung "+fmtD(b.execAt):""}</span>`:""}
       ${b.paidAt?`<span>Bezahlt</span><span>${fmtD(b.paidAt)}</span>`:""}</div>
+    ${open && b.dueGuess?`<div class="banner">Die Zahlungsfrist stand nicht im QR-Code. Ich habe 30 Tage angenommen${b.issue?"":""} – steht auf der Rechnung etwas anderes, tippe auf «Bearbeiten».</div>`:""}
     ${open && b.reminder?`<div class="banner" style="background:var(--bad-soft);color:var(--bad)">Das ist eine Mahnung – am besten diese zuerst zahlen, dann kommen keine Gebühren dazu.</div>`:""}
     ${open && b.cat==="Steuern" && b.amount>=2000?`<div class="banner">Tipp: Beim Steueramt kannst du eine Ratenzahlung beantragen (Verzugszins beachten).</div>`:""}
     ${open && probs.length?`<div class="banner" style="background:var(--warn-soft);color:var(--warn)">Für UBS fehlt noch: ${esc(probs.join(", "))}. Tippe auf «Bearbeiten».</div>`:""}
@@ -721,17 +722,17 @@ async function addFromQR(q){
   if (!q){ toast("Das war keine QR-Rechnung."); return; }
   leaveDemo();
   const b = { id:uid(), status:"open", added:TODAY, creditor:String(q.creditor||"Rechnung").slice(0,70), amount:Math.round((+q.amount||0)*100)/100,
-    due: q.due || addDays(q.issue || TODAY, 30), cat: guessCat(q.creditor,false), reminder:false, note:String(q.msg||"").slice(0,60),
+    due: q.due || addDays(q.issue || TODAY, 30), dueGuess: !q.due, cat: guessCat(q.creditor,false), reminder:false, note:String(q.msg||"").slice(0,60),
     iban:cleanIban(q.iban), ref:String(q.ref||"").replace(/\s/g,""), street:q.street||"", nr:q.nr||"", zip:q.zip||"", town:q.town||"", ctry:q.ctry||"CH", msg:q.msg||"" };
   if (!isDate(b.due)) b.due = addDays(TODAY,30);
   if (Object.values(st.bills).some(x => x.creditor===b.creditor && Math.abs(x.amount-b.amount)<0.01 && (x.ref||"")===b.ref && x.status!=="archived")){ toast(b.creditor + " ist schon erfasst"); return; }
   await saveBill(b); ui.tab = "bills"; ui.folder = "open"; render();
-  if (!(b.amount > 0) || !isDate(q.due)){ quickDue(b.id); } else { toast(`✓ ${b.creditor} · ${chf(b.amount)} eingelesen`); flashCard(b.id); }
+  if (!(b.amount > 0)){ quickDue(b.id); } else { toast(`✓ ${b.creditor} · ${chf(b.amount)} eingelesen`); flashCard(b.id); }
 }
 function quickDue(id){
   const b = st.bills[id];
   openSheet(`<form id="quickform" data-id="${id}" style="display:flex;flex-direction:column;gap:12px"><h2>✓ ${esc(b.creditor)}</h2>
-    <p class="muted" style="margin:0">QR-Code gelesen. ${b.amount>0?"":"Auf dieser Rechnung steht kein Betrag – bitte eintragen. "}Wann ist sie fällig?</p>
+    <p class="muted" style="margin:0">QR-Code gelesen. Auf dieser Rechnung steht kein Betrag im QR-Code – bitte eintragen.</p>
     <div class="two"><div class="field"><label for="q-amount">Betrag CHF</label><input id="q-amount" inputmode="decimal" value="${b.amount>0?b.amount.toFixed(2):""}"></div>
     <div class="field"><label for="q-due">Fällig am</label><input id="q-due" type="date" value="${b.due}"></div></div>
     <div class="chips">${[10,20,30,60].map(d=>`<button type="button" data-qd="${d}" aria-pressed="false">in ${d} Tagen</button>`).join("")}</div>
