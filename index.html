@@ -713,8 +713,18 @@ async function liveScan(){
       }
       n++;
       if (text){
-        const full = document.createElement("canvas"); full.width = v.videoWidth; full.height = v.videoHeight; full.getContext("2d").drawImage(v, 0, 0);
-        stopLive(); if (navigator.vibrate) navigator.vibrate(60); addFromQR(parseSPC(text), full); return;
+        liveOn = false; if (navigator.vibrate) navigator.vibrate(60);
+        $("#liveT").textContent = "QR erkannt ✓ – Foto für den Text …";
+        let full = null;
+        try{
+          const track = liveStream && liveStream.getVideoTracks()[0];
+          if (track && window.ImageCapture){
+            const blob = await withTimeout(new ImageCapture(track).takePhoto(), 5000);
+            if (blob && blob.size){ const bmp = await createImageBitmap(blob); full = document.createElement("canvas"); full.width = bmp.width; full.height = bmp.height; full.getContext("2d").drawImage(bmp, 0, 0); diag.src = "Foto"; }
+          }
+        }catch(e){}
+        if (!full){ full = document.createElement("canvas"); full.width = v.videoWidth; full.height = v.videoHeight; full.getContext("2d").drawImage(v, 0, 0); diag.src = "Videobild"; }
+        stopLive(); addFromQR(parseSPC(text), full); return;
       }
       if (n === 50) $("#liveT").textContent = "Etwas näher ran, bis der QR-Code gut lesbar ist";
     }
@@ -729,7 +739,13 @@ async function addFromQR(q, canvas){
   let inf = {due:"", issue:"", days:0, reminder:false};
   if (canvas && (!IN_CLAUDE || window.__ocrText !== undefined)){
     busy("QR-Code gelesen ✓", tessWorker || window.__ocrText !== undefined ? "Lese Datum und Mahnung …" : "Lese Datum und Mahnung … (beim ersten Mal dauert es etwas länger)");
-    try{ inf = infoFromText(await withTimeout(ocrText(canvas), 30000)); }catch(e){}
+    Object.assign(diag, {when:new Date().toLocaleString("de-CH"), size:canvas.width+"×"+canvas.height, status:"startet", chars:0, text:"", found:""});
+    try{
+      const t = await withTimeout(ocrText(canvas), 45000);
+      if (!t && diag.status !== "Text gelesen" && !/nicht geladen/.test(diag.status)) diag.status = "Zeitüberschreitung (" + diag.status + ")";
+      diag.chars = t.length; diag.text = t.slice(0, 1500); inf = infoFromText(t);
+      diag.found = [inf.due ? "Fälligkeit " + fmtD(inf.due) : "keine Fälligkeit", inf.issue ? "Rechnungsdatum " + fmtD(inf.issue) : "", inf.days ? inf.days + " Tage" : "", inf.reminder ? "Mahnung" : ""].filter(Boolean).join(" · ");
+    }catch(e){ diag.status = diag.status || ("Fehler: " + ((e && e.message) || e)); }
     busy(null);
     if (!q.due && inf.due) q.due = inf.due;
     if (!q.issue && inf.issue) q.issue = inf.issue;
@@ -741,7 +757,10 @@ async function addFromQR(q, canvas){
   if (Object.values(st.bills).some(x => x.creditor===b.creditor && Math.abs(x.amount-b.amount)<0.01 && (x.ref||"")===b.ref && x.status!=="archived")){ toast(b.creditor + " ist schon erfasst"); return; }
   await saveBill(b); ui.tab = "bills"; ui.folder = "open"; render();
   if (!(b.amount > 0)){ quickDue(b.id); }
-  else { toast(`✓ ${b.creditor} · ${chf(b.amount)}` + (b.dueGuess ? " · Datum: ca. 30 Tage" : ` · fällig ${fmtDs(b.due)}`) + (b.reminder ? " · Mahnung!" : "")); flashCard(b.id); }
+  else {
+    const why = !canvas ? "" : /nicht geladen/.test(diag.status) ? " (Texterkennung lädt nicht)" : !diag.chars ? " (kein Text erkannt)" : "";
+    toast(`✓ ${b.creditor} · ${chf(b.amount)}` + (b.dueGuess ? " · Datum: ca. 30 Tage" + why : ` · fällig ${fmtDs(b.due)}`) + (b.reminder ? " · Mahnung!" : "")); flashCard(b.id);
+  }
   return b.id;
 }
 function quickDue(id){
@@ -840,18 +859,22 @@ function infoFromText(t){
   return {due, issue, days, reminder};
 }
 let tessP = null, tessWorker = null;
+const diag = {when:"", src:"", size:"", status:"", chars:0, text:"", found:""};
 function loadTess(){
   if (window.__ocrText !== undefined || IN_CLAUDE) return Promise.resolve();
   if (!tessP) tessP = new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); })
-    .then(() => Tesseract.createWorker("deu")).then(w => (tessWorker = w)).catch(e => { tessP = null; throw e; });
+    .then(() => Tesseract.createWorker("deu")).then(w => (tessWorker = w)).catch(e => { tessP = null; diag.status = "Texterkennung konnte nicht geladen werden: " + ((e && (e.message || e.type)) || e); throw e; });
   return tessP;
 }
 async function ocrText(canvas){
   if (window.__ocrText !== undefined) return window.__ocrText; // test hook
   if (IN_CLAUDE) return "";
+  diag.status = "lade Texterkennung …";
   await loadTess();
-  const c = cropCanvas(canvas, 0, 0, canvas.width, canvas.height, 2200, 0);
-  const r = await tessWorker.recognize(c); return (r && r.data && r.data.text) || "";
+  diag.status = "lese Text …";
+  const c = cropCanvas(canvas, 0, 0, canvas.width, canvas.height, 2600, 0);
+  const r = await tessWorker.recognize(c); const t = (r && r.data && r.data.text) || "";
+  diag.status = "Text gelesen"; return t;
 }
 const withTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r(""), ms))]);
 function payFromText(t){
@@ -875,7 +898,7 @@ async function scanFiles(files){
       const {pages, text} = await fileToCanvas(f);
       const qr = await readQR(pages);
       const tx = payFromText(text);
-      if (qr && !sample){ busy(null); await addFromQR(qr, pages[0]); if (list.length === 1) return; ok++; continue; }
+      if (qr && !sample){ busy(null); diag.src = "Galerie/Kamera-Foto"; await addFromQR(qr, pages[0]); if (list.length === 1) return; ok++; continue; }
       let ai = null, aiErr = "";
       if (sample){
         busy(qr ? "QR-Code gelesen ✓" : "Kein QR-Code gefunden", qr ? "Ich hole noch das Fälligkeitsdatum …" : "Claude liest die Rechnung – das dauert kurz …");
@@ -1099,7 +1122,11 @@ function settingsSheet(){
     <button class="btn primary" type="submit">Speichern</button></form>
     <p class="small muted" style="margin:0">${store.mode==="db"?"Deine Daten sind privat in deinem Claude-Konto gespeichert – auf PC und Handy gleich.":"Deine Daten sind nur auf diesem Gerät gespeichert. Mach ab und zu eine Sicherung."}</p>
     <div class="btnrow"><button class="btn" data-act="backup">Sicherung speichern</button><button class="btn" data-act="restore">Sicherung laden</button></div>
-    ${IN_CLAUDE?"":`<button class="btn" data-act="pinchange">PIN ändern</button>`}
+    ${IN_CLAUDE?"":`<button class="btn" data-act="pinchange">PIN ändern</button>
+    <details><summary>Diagnose letzter Scan</summary><div class="inner small">
+      <div class="kv"><span>Zeit</span><span>${esc(diag.when||"–")}</span><span>Bild</span><span>${esc((diag.src||"–")+" "+(diag.size||""))}</span><span>Status</span><span>${esc(diag.status||"–")}</span><span>Zeichen</span><span>${diag.chars}</span><span>Gefunden</span><span>${esc(diag.found||"–")}</span></div>
+      <pre style="white-space:pre-wrap;font-size:.75rem;background:var(--sunk);padding:8px;border-radius:8px;max-height:220px;overflow:auto;margin:0">${esc(diag.text||"(kein Text)")}</pre>
+    </div></details>`}
     <button class="btn" data-act="close">Schliessen</button>`);
 }
 
