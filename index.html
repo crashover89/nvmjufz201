@@ -253,6 +253,7 @@ const TODAY = iso(new Date());
 const parseIso = s => { const [y,m,d] = String(s).slice(0,10).split("-").map(Number); return new Date(y,(m||1)-1,d||1); };
 const daysUntil = s => Math.round((parseIso(s) - parseIso(TODAY)) / 864e5);
 const addDays = (s,n) => { const d = parseIso(s); d.setDate(d.getDate()+n); return iso(d); };
+const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s||"")) && !isNaN(parseIso(s)) && iso(parseIso(s)) === String(s);
 const fmtD = s => s ? s.slice(8,10)+"."+s.slice(5,7)+"."+s.slice(0,4) : "–";
 const fmtDs = s => s ? s.slice(8,10)+"."+s.slice(5,7)+"." : "";
 const WD = ["So","Mo","Di","Mi","Do","Fr","Sa"];
@@ -308,8 +309,13 @@ function parseSPC(text){
   const s1 = String(L[31]||""); // //S1/10/RechnungsNr/11/YYMMDD/.../40/0:30
   if (s1.startsWith("//S1/")){
     const f = {}; const parts = s1.slice(5).split("/"); for (let i=0;i+1<parts.length;i+=2) f[parts[i]] = parts[i+1];
-    if (/^\d{6}/.test(f["11"]||"")){ const d = f["11"]; q.issue = "20"+d.slice(0,2)+"-"+d.slice(2,4)+"-"+d.slice(4,6);
-      const net = String(f["40"]||"").split(";").map(x=>x.split(":")).find(x=>+x[0]===0); q.due = addDays(q.issue, net ? +net[1] : 30); }
+    if (/^\d{6}/.test(f["11"]||"")){ const d = f["11"], is = "20"+d.slice(0,2)+"-"+d.slice(2,4)+"-"+d.slice(4,6);
+      if (isDate(is)){
+        q.issue = is;
+        const net = String(f["40"]||"").split(";").map(x => x.split(":")).find(x => x.length === 2 && x[0] !== "" && +x[0] === 0 && /^\d{1,3}$/.test(x[1]));
+        if (net) q.due = addDays(is, +net[1]);
+      }
+    }
     if (f["10"]) q.invoiceNo = f["10"];
   }
   return q;
@@ -331,7 +337,7 @@ const KW = [
   [/uber ?eats|just ?eat|eat\.ch|smood|restaurant|mcdonald|burger king|starbucks|kebab|pizz|café|takeaway|subway|\bkfc\b|sushi/i,"Auswärts essen"],
   [/galaxus|digitec|zalando|amazon|aliexpress|temu|shein|brack|ikea|interdiscount|mediamarkt|microspot|about you|h&m|zara|manor/i,"Online-Shopping"],
   [/\bsbb\b|\bzvv\b|postauto|shell|\bbp\b|avia|agrola|tamoil|socar|migrol|coop pronto|parking|parkhaus|\buber\b|mobility|strassenverkehrsamt|garage/i,"Mobilität"],
-  [/apotheke|zahnarzt|arzt|praxis|spital|klinik|physio|optiker|amavita|sunstore/i,"Gesundheit"],
+  [/apotheke|zahnarzt|arzt|praxis|spital|klinik|physio|optik|hörgerät|akustik|schaetzle|fielmann|visilab|amavita|sunstore/i,"Gesundheit"],
   [/kino|pathé|ticketcorner|steam|playstation|nintendo|xbox|hallenbad|bergbahn/i,"Freizeit"],
   [/bancomat|geldautomat|\batm\b|bargeldbezug/i,"Bargeld"],
   [/twint/i,"TWINT / Überweisung"]
@@ -365,6 +371,7 @@ function fromDocs(entries){
     else if (id === "settings") settings = Object.assign(DEF_SETTINGS(), data);
   }
   st.settings = settings;
+  for (const b of Object.values(bills)) if (!isDate(b.due)){ b.due = addDays(isDate(b.added) ? b.added : TODAY, 30); b.dueGuess = true; }
   if (!Object.keys(bills).length && !Object.keys(months).length) loadDemo();
   else { st.demo = false; st.bills = bills; st.months = months; }
 }
@@ -509,7 +516,7 @@ function billCard(b){
   return `<div class="bill ${sel?"sel":""}">
     <button class="pick" style="--av:${catColor(b.cat)}" data-sel="${b.id}" aria-pressed="${sel}" aria-label="${esc(b.creditor)} auswählen"><span class="ini">${esc((b.creditor.trim()[0]||"?").toUpperCase())}</span><span class="ck">${ICON.check}</span></button>
     <div class="body" data-open="${b.id}"><div class="nm">${esc(b.creditor)}</div>
-      <div class="when"><span class="tag t-${s.k}">${s.label}</span><span>${wd(b.due)} ${fmtDs(b.due)}</span>${b.sentAt?`<span class="tag t-good">bei UBS</span>`:""}${pay?`<span class="tag t-good">im Konto gesehen</span>`:""}${probs.length&&!b.sentAt?`<span class="tag t-calm">Angaben fehlen</span>`:""}</div></div>
+      <div class="when"><span class="tag t-${s.k}">${s.label}</span><span>${wd(b.due)} ${fmtDs(b.due)}</span>${b.dueGuess?`<span class="tag t-warn">Datum prüfen</span>`:""}${b.sentAt?`<span class="tag t-good">bei UBS</span>`:""}${pay?`<span class="tag t-good">im Konto gesehen</span>`:""}${probs.length&&!b.sentAt?`<span class="tag t-calm">Angaben fehlen</span>`:""}</div></div>
     <div class="amt n">${chf(b.amount)}</div></div>`;
 }
 function doneCard(b){
@@ -714,11 +721,12 @@ async function addFromQR(q){
   if (!q){ toast("Das war keine QR-Rechnung."); return; }
   leaveDemo();
   const b = { id:uid(), status:"open", added:TODAY, creditor:String(q.creditor||"Rechnung").slice(0,70), amount:Math.round((+q.amount||0)*100)/100,
-    due: q.due || addDays(TODAY,30), cat: guessCat(q.creditor,false), reminder:false, note:String(q.msg||"").slice(0,60),
+    due: q.due || addDays(q.issue || TODAY, 30), cat: guessCat(q.creditor,false), reminder:false, note:String(q.msg||"").slice(0,60),
     iban:cleanIban(q.iban), ref:String(q.ref||"").replace(/\s/g,""), street:q.street||"", nr:q.nr||"", zip:q.zip||"", town:q.town||"", ctry:q.ctry||"CH", msg:q.msg||"" };
+  if (!isDate(b.due)) b.due = addDays(TODAY,30);
   if (Object.values(st.bills).some(x => x.creditor===b.creditor && Math.abs(x.amount-b.amount)<0.01 && (x.ref||"")===b.ref && x.status!=="archived")){ toast(b.creditor + " ist schon erfasst"); return; }
   await saveBill(b); ui.tab = "bills"; ui.folder = "open"; render();
-  if (!(b.amount > 0) || !q.due){ quickDue(b.id); } else { toast(`✓ ${b.creditor} · ${chf(b.amount)} eingelesen`); flashCard(b.id); }
+  if (!(b.amount > 0) || !isDate(q.due)){ quickDue(b.id); } else { toast(`✓ ${b.creditor} · ${chf(b.amount)} eingelesen`); flashCard(b.id); }
 }
 function quickDue(id){
   const b = st.bills[id];
@@ -1096,13 +1104,13 @@ document.addEventListener("submit", async e => {
     const b = Object.assign(id && st.bills[id] ? st.bills[id] : {id:uid(), status:"open", added:TODAY}, {
       creditor:$("#f-creditor").value.trim(), amount:Math.round(amount*100)/100, due:$("#f-due").value || addDays(TODAY,30), cat:$("#f-cat").value, reminder:$("#f-reminder").checked,
       iban, ref:$("#f-ref").value.replace(/\s/g,""), street:$("#f-street").value.trim(), nr:$("#f-nr").value.trim(), zip:$("#f-zip").value.trim(), town:$("#f-town").value.trim(), msg:$("#f-msg").value.trim(), note:$("#f-note").value.trim() });
-    if (!b.ctry) b.ctry = "CH";
+    if (!b.ctry) b.ctry = "CH"; if (!isDate(b.due)) b.due = addDays(TODAY,30); delete b.dueGuess;
     await saveBill(b); closeSheet(); ui.tab = "bills"; render(); const pr = payProblems(b); toast(pr.length ? "Gespeichert ✓ – für UBS fehlt noch: " + pr[0] : (id ? "Gespeichert ✓" : "Rechnung erfasst ✓"));
   }
   if (f.id === "quickform"){
     const b = st.bills[f.dataset.id], a = parseFloat(String($("#q-amount").value).replace(/[’'\s]/g,"").replace(",","."));
     if (!(a > 0)){ $("#q-amount").classList.add("err"); $("#q-amount").focus(); return; }
-    b.amount = Math.round(a*100)/100; b.due = $("#q-due").value || b.due; await saveBill(b); closeSheet(); render(); toast(`✓ ${b.creditor} · ${chf(b.amount)} gespeichert`); flashCard(b.id);
+    b.amount = Math.round(a*100)/100; if (isDate($("#q-due").value)) b.due = $("#q-due").value; delete b.dueGuess; await saveBill(b); closeSheet(); render(); toast(`✓ ${b.creditor} · ${chf(b.amount)} gespeichert`); flashCard(b.id);
   }
   if (f.id === "txform"){
     const k = f.dataset.m, tx = st.months[k].items.find(x => x.id === f.dataset.id), cat = $("#t-cat").value; tx.cat = cat;
