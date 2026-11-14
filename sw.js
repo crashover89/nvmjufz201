@@ -1,9 +1,12 @@
-// Offline-Cache: zuerst Netz, sonst gespeicherte Kopie. Rechnungsdaten liegen nicht hier, sondern im Gerätespeicher.
-const C = "finanz-v6";
+// Offline-Cache: immer zuerst die neueste Version aus dem Netz holen, sonst gespeicherte Kopie.
+// Rechnungsdaten liegen nicht hier, sondern im Gerätespeicher.
+const C = "finanz-v7";
 self.addEventListener("install", e => { self.skipWaiting(); e.waitUntil(caches.open(C).then(c => c.addAll(["./", "index.html", "icon.svg", "manifest.webmanifest"]).catch(()=>{}))); });
-self.addEventListener("activate", e => e.waitUntil(self.clients.claim()));
+self.addEventListener("activate", e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== C).map(k => caches.delete(k)))).then(() => self.clients.claim())));
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
-  e.respondWith(fetch(e.request).then(r => { if (r && (r.ok || r.type === "opaque")){ const cp = r.clone(); caches.open(C).then(c => c.put(e.request, cp)); } return r; })
-    .catch(() => caches.match(e.request)));
+  const same = new URL(e.request.url).origin === location.origin;
+  const net = same ? fetch(e.request.url, {cache:"no-cache"}) : fetch(e.request);
+  e.respondWith(net.then(r => { if (r && (r.ok || r.type === "opaque")){ const cp = r.clone(); caches.open(C).then(c => c.put(e.request, cp)); } return r; })
+    .catch(() => caches.match(e.request, {ignoreSearch:true})));
 });

@@ -238,6 +238,7 @@ details .inner{display:flex;flex-direction:column;gap:10px}
 <script>
 "use strict";
 const IN_CLAUDE = !!(window.claude && window.claude.use);
+const APP_VERSION = "7";
 if (!IN_CLAUDE){
   try{ const l = document.createElement("link"); l.rel = "manifest"; l.href = "manifest.webmanifest"; document.head.appendChild(l);
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(()=>{}); }catch(e){}
@@ -546,7 +547,7 @@ function showBill(id){
       ${b.town?`<span>Adresse</span><span>${esc([[b.street,b.nr].filter(Boolean).join(" "), [b.zip,b.town].filter(Boolean).join(" ")].filter(Boolean).join(", "))}</span>`:""}
       ${b.sentAt?`<span>An UBS</span><span>übergeben ${fmtD(b.sentAt)}${b.execAt?", Ausführung "+fmtD(b.execAt):""}</span>`:""}
       ${b.paidAt?`<span>Bezahlt</span><span>${fmtD(b.paidAt)}</span>`:""}</div>
-    ${open && b.dueGuess?`<div class="banner">Die Zahlungsfrist stand nicht im QR-Code. Ich habe 30 Tage angenommen${b.issue?"":""} – steht auf der Rechnung etwas anderes, tippe auf «Bearbeiten».</div>`:""}
+    ${open && b.dueGuess?`<div class="banner">Die Zahlungsfrist stand nicht im QR-Code, darum ca. 30 Tage. Tippe auf «Datum vom Brief lesen» und fotografiere die Seite, auf der das Datum steht.</div>`:""}
     ${open && b.reminder?`<div class="banner" style="background:var(--bad-soft);color:var(--bad)">Das ist eine Mahnung – am besten diese zuerst zahlen, dann kommen keine Gebühren dazu.</div>`:""}
     ${open && b.cat==="Steuern" && b.amount>=2000?`<div class="banner">Tipp: Beim Steueramt kannst du eine Ratenzahlung beantragen (Verzugszins beachten).</div>`:""}
     ${open && probs.length?`<div class="banner" style="background:var(--warn-soft);color:var(--warn)">Für UBS fehlt noch: ${esc(probs.join(", "))}. Tippe auf «Bearbeiten».</div>`:""}
@@ -556,8 +557,6 @@ function showBill(id){
       ${open && !IN_CLAUDE?`<button class="btn" data-act="ics" data-id="${id}">Erinnerung</button>`:""}
     </div>
     ${open && b.dueGuess?`<button class="btn wide" data-act="page" data-id="${id}">${ICON.cam} Datum vom Brief lesen</button>`:""}
-    <div class="btnrow" style="display:none">
-    </div>
     <div class="btnrow"><button class="btn" data-act="edit" data-id="${id}">Bearbeiten</button><button class="btn danger" data-act="del" data-id="${id}">Löschen</button></div>`);
 }
 function billForm(b){
@@ -873,7 +872,7 @@ async function readQR(canvases){
   return null;
 }
 const MONTHS = {JANUAR:1,JAN:1,FEBRUAR:2,FEB:2,"MÄRZ":3,MAERZ:3,MRZ:3,APRIL:4,APR:4,MAI:5,JUNI:6,JUN:6,JULI:7,JUL:7,AUGUST:8,AUG:8,SEPTEMBER:9,SEPT:9,SEP:9,OKTOBER:10,OKT:10,NOVEMBER:11,NOV:11,DEZEMBER:12,DEZ:12};
-const DATE_RX = String.raw`(\d{1,2})\s?\.\s?(\d{1,2})\s?\.\s?(\d{4}|\d{2})(?!\d)|(\d{1,2})\.?\s+(JANUAR|JAN|FEBRUAR|FEB|MÄRZ|MAERZ|MRZ|APRIL|APR|MAI|JUNI|JUN|JULI|JUL|AUGUST|AUG|SEPTEMBER|SEPT|SEP|OKTOBER|OKT|NOVEMBER|NOV|DEZEMBER|DEZ)\.?\s+(\d{4})`;
+const DATE_RX = String.raw`(\d{1,2})\s?[.,]\s?(\d{1,2})\s?[.,]\s?(\d{4}|\d{2})(?!\d)|(\d{1,2})\.?\s+(JANUAR|JAN|FEBRUAR|FEB|MÄRZ|MAERZ|MRZ|APRIL|APR|MAI|JUNI|JUN|JULI|JUL|AUGUST|AUG|SEPTEMBER|SEPT|SEP|OKTOBER|OKT|NOVEMBER|NOV|DEZEMBER|DEZ)\.?\s+(\d{4})`;
 function dateFrom(m, i){ // m = match array, i = index of first DATE_RX group
   let d, mo, y;
   if (m[i]){ d = +m[i]; mo = +m[i+1]; y = m[i+2]; } else if (m[i+3]){ d = +m[i+3]; mo = MONTHS[m[i+4]]; y = m[i+5]; } else return "";
@@ -885,7 +884,7 @@ function infoFromText(t){
   const T = String(t||"").toUpperCase().replace(/ /g," ").replace(/(?<=\d)[OD](?=[\d.])|(?<=[\s.:])O(?=\d)|(?<=\d\.)[Il](?=\d)/g,"0");
   const KEY_DUE = String.raw`(?:ZAHLBAR\s+(?:BIS|AM)(?:\s+(?:SPÄTESTENS|ZUM|AM))?|FÄLLIG(?:KEIT(?:SDATUM)?)?(?:\s+(?:AM|BIS|PER|ZUM))?|ZAHLUNGSFRIST(?:\s+BIS)?|ZAHLUNGSTERMIN|SPÄTESTENS(?:\s+(?:BIS|AM|ZUM))?|BIS\s+(?:SPÄTESTENS|ZUM)|EINZAHLEN\s+BIS|ZU\s+BEZAHLEN\s+BIS|PAYABLE\s+(?:BY|UNTIL)|DUE\s+DATE|ÉCHÉANCE|PAYABLE\s+JUSQU)`;
   let due = "";
-  for (const m of T.matchAll(new RegExp(KEY_DUE + String.raw`[^\d\n]{0,30}(?:` + DATE_RX + ")", "g"))){ due = dateFrom(m, 1); if (due) break; }
+  for (const m of T.matchAll(new RegExp(KEY_DUE + String.raw`[^\d]{0,40}(?:` + DATE_RX + ")", "g"))){ due = dateFrom(m, 1); if (due) break; }
   let issue = "";
   const im = T.match(new RegExp(String.raw`(?:RECHNUNGSDATUM|RECHNUNG\s+VOM|DATUM|DATE|VOM)[^\d\n]{0,15}(?:` + DATE_RX + ")"));
   if (im) issue = dateFrom(im, 1);
@@ -893,6 +892,10 @@ function infoFromText(t){
   const dm = T.match(/(?:INNERT|INNERHALB(?:\s+VON)?|BINNEN|ZAHLBAR\s+IN)\s+(\d{1,3})\s+TAGEN|(\d{1,3})\s+TAGE\s+NETTO|NETTO\s+(\d{1,3})\s+TAGE/);
   const days = dm ? +(dm[1] || dm[2] || dm[3]) : 0;
   if (!due && days && issue && days <= 120) due = addDays(issue, days);
+  if (!due){ // fallback: exactly one date in the near future → that is the deadline
+    const fut = [...new Set([...T.matchAll(new RegExp(DATE_RX, "g"))].map(m => dateFrom(m, 1)).filter(x => x && daysUntil(x) >= -5 && daysUntil(x) <= 120 && x !== issue))];
+    if (fut.length === 1) due = fut[0];
+  }
   const reminder = /\bMAHNUNG\b|ZAHLUNGSERINNERUNG|LETZTE\s+(?:MAHNUNG|AUFFORDERUNG)|\bRAPPEL\b|SOLLECITO|\d\.\s?ERINNERUNG|ZWEITE\s+ERINNERUNG/.test(T);
   return {due, issue, days, reminder};
 }
@@ -910,7 +913,12 @@ async function ocrText(canvas){
   diag.status = "lade Texterkennung …";
   await loadTess();
   diag.status = "lese Text …";
-  const c = cropCanvas(canvas, 0, 0, canvas.width, canvas.height, 2600, 0);
+  // Tesseract liest kleine Schrift viel besser, wenn das Bild gross und grau ist: auf ca. 3000 px skalieren (auch hoch)
+  const k = Math.min(3, 3000 / Math.max(canvas.width, canvas.height));
+  const c = document.createElement("canvas"); c.width = Math.round(canvas.width*k); c.height = Math.round(canvas.height*k);
+  const cx = c.getContext("2d"); cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = "high";
+  try{ cx.filter = "grayscale(1) contrast(1.25)"; }catch(e){}
+  cx.drawImage(canvas, 0, 0, c.width, c.height);
   const r = await tessWorker.recognize(c); const t = (r && r.data && r.data.text) || "";
   diag.status = "Text gelesen"; return t;
 }
@@ -1160,7 +1168,7 @@ function settingsSheet(){
     <button class="btn primary" type="submit">Speichern</button></form>
     <p class="small muted" style="margin:0">${store.mode==="db"?"Deine Daten sind privat in deinem Claude-Konto gespeichert – auf PC und Handy gleich.":"Deine Daten sind nur auf diesem Gerät gespeichert. Mach ab und zu eine Sicherung."}</p>
     <div class="btnrow"><button class="btn" data-act="backup">Sicherung speichern</button><button class="btn" data-act="restore">Sicherung laden</button></div>
-    ${IN_CLAUDE?"":`<button class="btn" data-act="pinchange">PIN ändern</button>
+    ${IN_CLAUDE?"":`<p class="small muted" style="margin:0">App-Version ${APP_VERSION}</p><button class="btn" data-act="pinchange">PIN ändern</button>
     <details><summary>Diagnose letzter Scan</summary><div class="inner small">
       <div class="kv"><span>Zeit</span><span>${esc(diag.when||"–")}</span><span>Bild</span><span>${esc((diag.src||"–")+" "+(diag.size||""))}</span><span>Status</span><span>${esc(diag.status||"–")}</span><span>Zeichen</span><span>${diag.chars}</span><span>Gefunden</span><span>${esc(diag.found||"–")}</span></div>
       <pre style="white-space:pre-wrap;font-size:.75rem;background:var(--sunk);padding:8px;border-radius:8px;max-height:220px;overflow:auto;margin:0">${esc(diag.text||"(kein Text)")}</pre>
@@ -1306,6 +1314,15 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) hiddenAt = Date.now(); else if (hiddenAt && Date.now() - hiddenAt > 60000 && !pinState){ stopLive(); closeSheet(); pinScreen("unlock"); }
 });
 if (!IN_CLAUDE) pinScreen(pinGet() ? "unlock" : "set");
+if (!IN_CLAUDE && location.protocol === "https:"){
+  const checkUpdate = () => fetch("version.json?t=" + Date.now(), {cache:"no-store"}).then(r => r.json()).then(j => {
+    if (j && j.v && j.v !== APP_VERSION){
+      let n = 0; try{ n = +sessionStorage.getItem("fo-upd") || 0; sessionStorage.setItem("fo-upd", n + 1); }catch(e){}
+      if (n < 2) location.reload();
+    }
+  }).catch(()=>{});
+  checkUpdate(); document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUpdate(); });
+}
 
 loadDemo();
 boot();
