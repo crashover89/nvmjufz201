@@ -226,6 +226,7 @@ details .inner{display:flex;flex-direction:column;gap:10px}
 <div class="busy" id="busy" hidden><div class="bx"><span class="spin"></span><b id="busyT">Lese QR-Code …</b><span class="small muted" id="busyS"></span></div></div>
 <input type="file" id="f-scan" accept="image/*,application/pdf" multiple hidden>
 <input type="file" id="f-cam" accept="image/*" capture="environment" hidden>
+<input type="file" id="f-page" accept="image/*" capture="environment" hidden>
 <input type="file" id="f-restore" accept=".json,application/json" hidden>
 <input type="file" id="f-camt" accept=".xml,.zip,application/xml,text/xml,application/zip" multiple hidden>
 
@@ -554,6 +555,9 @@ function showBill(id){
       ${open && !probs.length && window.qrcode?`<button class="btn" data-act="qr" data-id="${id}">QR für UBS-App</button>`:""}
       ${open && !IN_CLAUDE?`<button class="btn" data-act="ics" data-id="${id}">Erinnerung</button>`:""}
     </div>
+    ${open && b.dueGuess?`<button class="btn wide" data-act="page" data-id="${id}">${ICON.cam} Datum vom Brief lesen</button>`:""}
+    <div class="btnrow" style="display:none">
+    </div>
     <div class="btnrow"><button class="btn" data-act="edit" data-id="${id}">Bearbeiten</button><button class="btn danger" data-act="del" data-id="${id}">Löschen</button></div>`);
 }
 function billForm(b){
@@ -757,11 +761,45 @@ async function addFromQR(q, canvas){
   if (Object.values(st.bills).some(x => x.creditor===b.creditor && Math.abs(x.amount-b.amount)<0.01 && (x.ref||"")===b.ref && x.status!=="archived")){ toast(b.creditor + " ist schon erfasst"); return; }
   await saveBill(b); ui.tab = "bills"; ui.folder = "open"; render();
   if (!(b.amount > 0)){ quickDue(b.id); }
+  else if (canvas && b.dueGuess){ askPage(b.id); }
   else {
     const why = !canvas ? "" : /nicht geladen/.test(diag.status) ? " (Texterkennung lädt nicht)" : !diag.chars ? " (kein Text erkannt)" : "";
     toast(`✓ ${b.creditor} · ${chf(b.amount)}` + (b.dueGuess ? " · Datum: ca. 30 Tage" + why : ` · fällig ${fmtDs(b.due)}`) + (b.reminder ? " · Mahnung!" : "")); flashCard(b.id);
   }
   return b.id;
+}
+let pageFor = null;
+function askPage(id){
+  const b = st.bills[id]; pageFor = id;
+  openSheet(`<h2>✓ ${esc(b.creditor)} · ${chf(b.amount)}</h2>
+    <p class="muted" style="margin:0">QR-Code gelesen. Fälligkeit und Mahnung stehen bei dieser Rechnung auf einer <b>anderen Seite</b> – meist auf Seite 1 (dem Brief).</p>
+    <button class="btn primary wide" data-act="page" data-id="${id}">${ICON.cam} Seite mit dem Datum fotografieren</button>
+    <button class="btn wide" data-act="close">Passt so – ca. 30 Tage</button>`);
+}
+async function readPageInfo(canvas){
+  if (IN_CLAUDE && window.__ocrText === undefined){
+    const sample = await claude.use("sample"); if (!sample) return {};
+    const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.9));
+    try{ const a = await sample.json(`Das Bild zeigt eine Seite einer Rechnung oder Mahnung aus der Schweiz. Heute ist ${TODAY}. Antworte nur mit JSON: {"dueDate":"YYYY-MM-DD bis wann bezahlt werden muss, oder null","issueDate":"YYYY-MM-DD oder null","reminder":true wenn es eine Mahnung oder Zahlungserinnerung ist}`, {images:[blob], modelTier:"quick"});
+      return {due: isDate(a && a.dueDate) ? a.dueDate : "", issue: isDate(a && a.issueDate) ? a.issueDate : "", reminder: !!(a && a.reminder)}; }catch(e){ return {}; }
+  }
+  Object.assign(diag, {when:new Date().toLocaleString("de-CH"), src:"Briefseite", size:canvas.width+"×"+canvas.height, status:"startet", chars:0, text:"", found:""});
+  const t = await withTimeout(ocrText(canvas), 45000); diag.chars = t.length; diag.text = t.slice(0,1500);
+  const inf = infoFromText(t); diag.found = [inf.due ? "Fälligkeit " + fmtD(inf.due) : "keine Fälligkeit", inf.reminder ? "Mahnung" : ""].filter(Boolean).join(" · ");
+  return inf;
+}
+async function enrichFromPhoto(file){
+  const id = pageFor, b = st.bills[id]; if (!b) return;
+  busy("Lese die Seite …", "Fälligkeit und Mahnung");
+  let inf = {};
+  try{ const {pages} = await fileToCanvas(file); inf = await readPageInfo(pages[0]); }catch(e){}
+  busy(null);
+  const got = [];
+  if (isDate(inf.due)){ b.due = inf.due; delete b.dueGuess; got.push("fällig " + fmtDs(b.due)); }
+  else if (isDate(inf.issue) && b.dueGuess){ b.due = addDays(inf.issue, inf.days || 30); got.push("ca. " + fmtDs(b.due)); }
+  if (inf.reminder){ b.reminder = true; got.push("Mahnung!"); }
+  if (got.length){ await saveBill(b); render(); toast("✓ " + b.creditor + " · " + got.join(" · ")); flashCard(id); }
+  else toast("Kein Datum gefunden – bitte die Seite gerade, ganz und hell fotografieren.");
 }
 function quickDue(id){
   const b = st.bills[id];
@@ -1151,6 +1189,7 @@ document.addEventListener("click", async e => {
     if (D.act === "reopen"){ const b = st.bills[id]; b.status = "open"; delete b.paidAt; delete b.archiveMonth; saveBill(b); closeSheet(); render(); toast("Wieder offen"); }
     if (D.act === "edit") billForm(st.bills[id]);
     if (D.act === "qr") showQR(id);
+    if (D.act === "page"){ pageFor = id; closeSheet(); $("#f-page").click(); }
     if (D.act === "ics") icsFor(id);
     if (D.act === "backup") doBackup();
     if (D.act === "restore") $("#f-restore").click();
@@ -1206,6 +1245,7 @@ document.addEventListener("submit", async e => {
 });
 document.addEventListener("change", e => {
   if (e.target.id === "f-scan" || e.target.id === "f-cam"){ scanFiles(e.target.files); e.target.value = ""; }
+  if (e.target.id === "f-page" && e.target.files[0]){ enrichFromPhoto(e.target.files[0]); e.target.value = ""; }
   if (e.target.id === "f-restore" && e.target.files[0]){ restoreBackup(e.target.files[0]); e.target.value = ""; }
   if (e.target.id === "f-camt"){ importFiles([...e.target.files]); e.target.value = ""; }
 });
