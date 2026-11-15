@@ -238,7 +238,7 @@ details .inner{display:flex;flex-direction:column;gap:10px}
 <script>
 "use strict";
 const IN_CLAUDE = !!(window.claude && window.claude.use);
-const APP_VERSION = "7";
+const APP_VERSION = "8";
 if (!IN_CLAUDE){
   try{ const l = document.createElement("link"); l.rel = "manifest"; l.href = "manifest.webmanifest"; document.head.appendChild(l);
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(()=>{}); }catch(e){}
@@ -324,8 +324,11 @@ function parseSPC(text){
 }
 
 /* ===== categories ===== */
-const CATS = ["Wohnen","Krankenkasse","Versicherung","Steuern","Energie","Telekom","Abos","Fitness","Lebensmittel","Auswärts essen","Online-Shopping","Mobilität","Gesundheit","Freizeit","Bargeld","Gebühren","TWINT / Überweisung","Sonstiges","Einnahmen"];
+const CATS = ["Wohnen","Krankenkasse","Versicherung","Steuern","Energie","Telekom","Abos","Fitness","Lebensmittel","Auswärts essen","Online-Shopping","Mobilität","Gesundheit","Freizeit","Bargeld","Gebühren","TWINT / Überweisung","Kredite / Raten","Sonstiges","Einnahmen","Umbuchung"];
 const KW = [
+  [/swisscard|viseca|payred|klarna|powerpay|cembra|cashgate|bob finance|accarda|byjuno|mf group/i,"Kredite / Raten"],
+  [/zinsabschluss|dienstleistungspreis|betreibungsamt/i,"Gebühren"],
+  [/swiss air|\bswiss\b.*flug|easyjet|booking\.com|hotel|airbnb|reisegeld/i,"Freizeit"],
   [/netflix|spotify|disney|dazn|teleclub|blue tv|sky |apple\.com|itunes|icloud|google (one|storage|play)|youtube|amazon prime|prime video|audible|microsoft|adobe|openai|chatgpt|anthropic|claude\.ai|patreon|deezer|tidal|canva|dropbox|zattoo|nzz|tages-anzeiger/i,"Abos"],
   [/fitness|fitnesspark|kieser|basefit|holmes place|\bgym\b/i,"Fitness"],
   [/swisscom|sunrise|\bsalt\b|wingo|yallo|m-budget mobile|quickline|init7/i,"Telekom"],
@@ -335,9 +338,9 @@ const KW = [
   [/\bekz\b|\bewz\b|\bbkw\b|axpo|groupe e|energie|strom|\bgas\b|werke /i,"Energie"],
   [/miete|mietzins|verwaltung|immobilien|liegenschaft|nebenkosten|wincasa|livit|privera/i,"Wohnen"],
   [/serafe|gebühr|kontoführung|spesen|jahresgebühr|mahngebühr|preis für|key4/i,"Gebühren"],
-  [/migros(?! fitness)|coop(?! pronto)|denner|aldi|lidl|volg|\bspar\b|landi|bäckerei|metzgerei|farmy/i,"Lebensmittel"],
-  [/uber ?eats|just ?eat|eat\.ch|smood|restaurant|mcdonald|burger king|starbucks|kebab|pizz|café|takeaway|subway|\bkfc\b|sushi/i,"Auswärts essen"],
-  [/galaxus|digitec|zalando|amazon|aliexpress|temu|shein|brack|ikea|interdiscount|mediamarkt|microspot|about you|h&m|zara|manor/i,"Online-Shopping"],
+  [/migros(?! fitness)|coop(?! pronto)|denner|aldi|lidl|volg|\bspar\b|landi|bäckerei|metzg|farmy|\bmarket\b|supercenter|\bmärt\b/i,"Lebensmittel"],
+  [/uber ?eats|just ?eat|eat\.ch|smood|restaurant|mcdonald|burger king|starbucks|kebab|pizz|café|\bcafe\b|coffee|bistro|confiseur|takeaway|subway|\bkfc\b|sushi/i,"Auswärts essen"],
+  [/galaxus|digitec|zalando|amazon|aliexpress|temu|shein|brack|ikea|interdiscount|mediamarkt|microspot|about you|h ?& ?m\b|zara|manor|dosenbach|chicorée|conforama|ochsner/i,"Online-Shopping"],
   [/\bsbb\b|\bzvv\b|postauto|shell|\bbp\b|avia|agrola|tamoil|socar|migrol|coop pronto|parking|parkhaus|\buber\b|mobility|strassenverkehrsamt|garage/i,"Mobilität"],
   [/apotheke|zahnarzt|arzt|praxis|spital|klinik|physio|optik|hörgerät|akustik|schaetzle|fielmann|visilab|amavita|sunstore/i,"Gesundheit"],
   [/kino|pathé|ticketcorner|steam|playstation|nintendo|xbox|hallenbad|bergbahn/i,"Freizeit"],
@@ -345,13 +348,15 @@ const KW = [
   [/twint/i,"TWINT / Überweisung"]
 ];
 function guessCat(text, isCredit){
-  if (isCredit) return "Einnahmen";
   const t = String(text||"");
+  if (/kontoübertrag|kontouebertrag|umbuchung|\bu\/o\b/i.test(t)) return "Umbuchung";
+  if (isCredit) return "Einnahmen";
   for (const r of st.settings.rules) if (r.m && t.toLowerCase().includes(r.m)) return r.c;
   for (const [re,c] of KW) if (re.test(t)) return c;
   return "Sonstiges";
 }
 const txCat = t => t.cat || guessCat(t.name+" "+t.text, t.amt>0);
+const isTransfer = t => txCat(t) === "Umbuchung";
 const normKey = s => (s||"").toLowerCase().replace(/\d+/g," ").replace(/[^a-zäöüéèàç+ ]+/g," ")
   .replace(/\b(ag|gmbh|sa|ch|zürich|zurich|schweiz|switzerland|www|com|de|the|und|einkauf|zahlung|debitkarte)\b/g," ")
   .replace(/\s+/g," ").trim().split(" ").slice(0,2).join(" ");
@@ -1031,11 +1036,12 @@ function parseCamt(xmlText){
         const text = cleanText([rmt, info, addl].filter(Boolean).join(" · ")).slice(0,160);
         const nm = (name || cleanText(info || addl || rmt)).slice(0,70);
         const signed = Math.round((credit ? amt : -amt)*100)/100;
-        tx.push({id:hash([acct,date,signed,nm,ref,ni,di].join("|")), date, amt:signed, name:nm, text: text===nm ? "" : text});
+        tx.push({id:hash([acct,date,signed,nm,ref,ni,di].join("|")), date, amt:signed, name:nm, text: text===nm ? "" : text, acct, ref: ref || ""});
       });
     });
   }
-  return {tx, bals};
+  const msgId = (doc.getElementsByTagNameNS("*","MsgId")[0] || {}).textContent || "";
+  return {tx, bals, src: msgId || hash(xmlText.slice(0, 20000))};
 }
 async function importFiles(files){
   const texts = [];
@@ -1050,7 +1056,19 @@ async function importFiles(files){
   for (const [name, t] of texts){
     let res; try{ res = parseCamt(t); }catch(e){ toast(`«${name}»: ${e.message}`); continue; }
     leaveDemo(); bals = bals.concat(res.bals);
-    for (const x of res.tx){ if (!x.date) continue; const k = monKey(x.date), m = (st.months[k] ||= {items:[]}); if (m.items.some(y => y.id === x.id)){ dup++; continue; } m.items.push(x); added++; touched.add(k); }
+    // Gleiche Buchung aus einer anderen Datei (z. B. einmalige Umwandlung + tägliche EoD-camt.053) nur einmal übernehmen:
+    // gleiche Bank-Referenz + Betrag, sonst gleiches Konto + Buchungstag + Betrag (Anzahl wird abgeglichen).
+    const seenKey = {};
+    for (const x of res.tx){
+      if (!x.date) continue; x.src = res.src;
+      const k = monKey(x.date), m = (st.months[k] ||= {items:[]});
+      if (m.items.some(y => y.id === x.id)){ dup++; continue; }
+      if (x.ref && m.items.some(y => y.ref && y.ref === x.ref && y.amt === x.amt && y.src !== x.src)){ dup++; continue; }
+      const key = x.date + "|" + x.amt; seenKey[key] = (seenKey[key] || 0) + 1;
+      const other = m.items.filter(y => y.src && y.src !== x.src && y.date === x.date && y.amt === x.amt && (!y.acct || !x.acct || y.acct === x.acct)).length;
+      if (seenKey[key] <= other){ dup++; continue; }
+      m.items.push(x); added++; touched.add(k);
+    }
   }
   for (const b of bals){ const cur = st.settings.balances[b.acct]; if (!cur || b.date >= cur.date) st.settings.balances[b.acct] = {amt:b.amt, date:b.date}; }
   if (!st.settings.payer.iban){ const k = bals.map(b=>b.acct).find(ibanOK); if (k) st.settings.payer.iban = k; }
@@ -1063,14 +1081,14 @@ async function importFiles(files){
 
 /* ===== konto view ===== */
 const monthsWithData = () => Object.keys(st.months).filter(k => (st.months[k].items||[]).length).sort();
-function catTotals(items){ const c = {}; items.filter(t=>t.amt<0).forEach(t => { const k = txCat(t); c[k] = (c[k]||0) - t.amt; }); return c; }
+function catTotals(items){ const c = {}; items.filter(t=>t.amt<0 && !isTransfer(t)).forEach(t => { const k = txCat(t); c[k] = (c[k]||0) - t.amt; }); return c; }
 function viewKonto(){
   const ks = monthsWithData();
   let h = `<button class="act alt" id="k-import" style="width:100%;box-shadow:0 6px 20px rgba(40,30,20,.10)">${ICON.up} Kontoauszug laden (camt)</button>`;
   if (!ks.length) return h + `<div class="empty"><b>Noch keine Buchungen</b><span>UBS E-Banking → Konten → Kontoauszüge → als <b>camt.053</b> herunterladen und hier laden. Doppelte Buchungen erkenne ich selbst.</span></div>`;
   if (!ui.month || !ks.includes(ui.month)) ui.month = ks[ks.length-1];
   const k = ui.month, items = (st.months[k].items||[]).slice().sort((a,b)=>b.date.localeCompare(a.date));
-  const inc = items.filter(t=>t.amt>0).reduce((s,t)=>s+t.amt,0), out = -items.filter(t=>t.amt<0).reduce((s,t)=>s+t.amt,0);
+  const inc = items.filter(t=>t.amt>0 && !isTransfer(t)).reduce((s,t)=>s+t.amt,0), out = -items.filter(t=>t.amt<0 && !isTransfer(t)).reduce((s,t)=>s+t.amt,0);
   const bal = balance(), balDate = Object.values(st.settings.balances||{}).map(b=>b.date).sort().pop();
   const cats = Object.entries(catTotals(items)).sort((a,b)=>b[1]-a[1]), max = cats.length ? cats[0][1] : 1;
   h += `${bal!==null?`<section class="hero" style="background:var(--fg);color:var(--bg)"><span class="lbl">Kontostand per ${fmtD(balDate)}</span><span class="big n">${chf(bal)}</span></section>`:""}
@@ -1104,10 +1122,10 @@ function analyse(){
   const windowKs = (partial ? [-3,-2,-1] : [-2,-1,0]).map(n => shiftMon(lastK,n)).filter(k => st.months[k]);
   const nM = Math.max(1, windowKs.length), win = windowKs.flatMap(k => st.months[k].items||[]);
   const avg = {}; Object.entries(catTotals(win)).forEach(([k,v]) => avg[k] = v/nM);
-  const income = win.filter(t=>t.amt>0).reduce((s,t)=>s+t.amt,0)/nM, spend = Object.values(avg).reduce((s,v)=>s+v,0);
+  const income = win.filter(t=>t.amt>0 && !isTransfer(t)).reduce((s,t)=>s+t.amt,0)/nM, spend = Object.values(avg).reduce((s,v)=>s+v,0);
   const six = ks.slice(-6).flatMap(k => st.months[k].items||[]).filter(t=>t.amt<0), groups = {};
   six.forEach(t => { const key = normKey(t.name || t.text); if (key) (groups[key] ||= {key, name:t.name||t.text, items:[], cat:txCat(t)}).items.push(t); });
-  const NOTSUB = new Set(["Lebensmittel","Auswärts essen","Online-Shopping","Bargeld","TWINT / Überweisung","Mobilität","Einnahmen"]), rec = [];
+  const NOTSUB = new Set(["Umbuchung","Lebensmittel","Auswärts essen","Online-Shopping","Bargeld","TWINT / Überweisung","Mobilität","Einnahmen"]), rec = [];
   for (const g of Object.values(groups)){
     const ms = new Set(g.items.map(t=>monKey(t.date))), amts = g.items.map(t=>-t.amt), med = median(amts), per = g.items.length/ms.size;
     if (ms.size >= 2 && per <= 1.5 && !NOTSUB.has(g.cat) && amts.every(a => Math.abs(a-med) <= Math.max(2, med*0.15))) rec.push({key:g.key, name:g.name, cat:g.cat, monthly:med*per});
@@ -1116,12 +1134,18 @@ function analyse(){
   const tips = [], add = (t, b, save, sev=1) => tips.push({t,b,save,sev});
   const eat = avg["Auswärts essen"]||0; if (eat > 150) add("Weniger Lieferdienst & Take-away", `Im Schnitt ${chf0(eat)} pro Monat. Zwei Bestellungen pro Woche weniger und Kaffee von zu Hause machen viel aus.`, eat*0.4*12);
   const shop = avg["Online-Shopping"]||0; if (shop > 120) add("Online-Shopping bremsen", `Im Schnitt ${chf0(shop)} pro Monat. Trick: Warenkorb 2 Tage liegen lassen, dann erst bestellen.`, shop*0.3*12);
-  const small = win.filter(t => t.amt<0 && -t.amt<15), smallM = small.reduce((s,t)=>s-t.amt,0)/nM;
+  const small = win.filter(t => t.amt<0 && -t.amt<15 && !isTransfer(t)), smallM = small.reduce((s,t)=>s-t.amt,0)/nM;
   if (small.length/nM >= 8) add("Viele kleine Käufe", `${Math.round(small.length/nM)} Käufe unter CHF 15 pro Monat – zusammen ${chf0(smallM)}.`, smallM*0.5*12);
   const streams = rec.filter(r => /netflix|disney|dazn|sky|prime|teleclub|blue|apple tv|zattoo/i.test(r.name));
   if (streams.length >= 2) add(`${streams.length} Streaming-Abos gleichzeitig`, `${streams.map(r=>r.name).join(", ")}. Abwechselnd abonnieren statt alle parallel.`, streams.slice(1).reduce((s,r)=>s+r.monthly,0)*12, 0);
   const kk = avg["Krankenkasse"]||0; if (kk > 300) add("Krankenkasse prüfen", `${chf0(kk)} pro Monat. Höhere Franchise oder Hausarzt-/Telmed-Modell spart oft 10–20 %. Grundversicherung kündbar bis 30. November.`, kk*0.12*12, new Date().getMonth()===10?0:1);
   const fees = avg["Gebühren"]||0; if (fees > 4) add("Bankgebühren", `${chf(fees)} pro Monat. Es gibt Privatkonten ohne Grundgebühr.`, Math.min(fees,10)*12);
+  const bal = balance();
+  const yearTx = allTx().filter(t => daysUntil(t.date) >= -365);
+  const interest = -yearTx.filter(t => t.amt < 0 && /zinsabschluss/i.test(t.name + " " + t.text)).reduce((s,t)=>s+t.amt,0);
+  if (bal !== null && bal < 0) add("Konto im Minus", `Kontostand ${chf(bal)}. Für das Minus verrechnet die Bank Zins` + (interest > 0 ? ` – in den letzten 12 Monaten ${chf0(interest)}.` : ".") + " Erst das Konto ausgleichen, dann sparen.", interest, 0);
+  const cred = avg["Kredite / Raten"]||0;
+  if (cred > 50) add("Kreditkarten & Ratenzahlungen", `Im Schnitt ${chf0(cred)} pro Monat an Swisscard, Viseca, PayRed, Klarna & Co. Raten und offene Kreditkarten-Saldi kosten oft 10–14 % Zins. Neue Käufe lieber direkt bezahlen.`, cred*0.12*12, 0);
   const rem = openBills().filter(b => b.reminder); if (rem.length) add("Mahnungen zuerst zahlen", `${rem.map(b=>b.creditor).join(", ")} – sonst kommen Mahngebühren dazu.`, rem.length*30, 0);
   tips.sort((a,b)=>a.sev-b.sev || b.save-a.save);
   return {avg, income, spend, rec, tips, nM};
