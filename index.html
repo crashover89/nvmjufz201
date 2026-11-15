@@ -239,7 +239,7 @@ details .inner{display:flex;flex-direction:column;gap:10px}
 <script>
 "use strict";
 const IN_CLAUDE = !!(window.claude && window.claude.use);
-const APP_VERSION = "13";
+const APP_VERSION = "14";
 if (!IN_CLAUDE){
   try{ const l = document.createElement("link"); l.rel = "manifest"; l.href = "manifest.webmanifest"; document.head.appendChild(l);
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(()=>{}); }catch(e){}
@@ -559,7 +559,7 @@ function showBill(id){
     ${open && probs.length?`<div class="banner" style="background:var(--warn-soft);color:var(--warn)">Für UBS fehlt noch: ${esc(probs.join(", "))}. Tippe auf «Bearbeiten».</div>`:""}
     <div class="btnrow">
       ${open?`<button class="btn primary" data-act="paid" data-id="${id}">${ICON.check} Bezahlt</button>`:`<button class="btn" data-act="reopen" data-id="${id}">Wieder öffnen</button>`}
-      ${open && !probs.length && window.qrcode?`<button class="btn" data-act="qr" data-id="${id}">QR für UBS-App</button>`:""}
+      ${open && !probs.length && window.qrcode?`<button class="btn" data-act="qr" data-id="${id}">QR anzeigen</button><button class="btn" data-act="qrpdf" data-id="${id}">QR als PDF</button>`:""}
       ${open && !IN_CLAUDE?`<button class="btn" data-act="ics" data-id="${id}">Erinnerung</button>`:""}
     </div>
     ${open && b.dueGuess?`<button class="btn wide" data-act="page" data-id="${id}">${ICON.cam} Datum vom Brief lesen</button>`:""}
@@ -586,11 +586,15 @@ function billForm(b){
   </form>`);
   if (isNew) setTimeout(()=>{ const f = $("#f-creditor"); if (f) f.focus(); }, 50);
 }
+function spcText(b){
+  const rt = refType(b);
+  return ["SPC","0200","1",cleanIban(b.iban),"S",b.creditor.slice(0,70),(b.street||"").slice(0,70),(b.nr||"").slice(0,16),(b.zip||"").slice(0,16),(b.town||"").slice(0,35),(b.ctry||"CH"),"","","","","","","",
+    b.amount.toFixed(2),"CHF","","","","","","","", rt, rt==="NON"?"":String(b.ref).replace(/\s/g,"").toUpperCase(), (b.msg||b.note||"").slice(0,140),"EPD"].join("\r\n");
+}
+function qrFor(b){ qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"]; const q = qrcode(0,"M"); q.addData(spcText(b),"Byte"); q.make(); return q; }
 function showQR(id){
-  const b = st.bills[id], rt = refType(b);
-  const lines = ["SPC","0200","1",cleanIban(b.iban),"S",b.creditor.slice(0,70),(b.street||"").slice(0,70),(b.nr||"").slice(0,16),(b.zip||"").slice(0,16),b.town.slice(0,35),(b.ctry||"CH"),"","","","","","","",
-    b.amount.toFixed(2),"CHF","","","","","","","", rt, rt==="NON"?"":String(b.ref).replace(/\s/g,"").toUpperCase(), (b.msg||b.note||"").slice(0,140),"EPD"];
-  qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"]; const q = qrcode(0,"M"); q.addData(lines.join("\r\n"),"Byte"); q.make();
+  const b = st.bills[id];
+  const q = qrFor(b);
   const n = q.getModuleCount(), m = 4, size = n + m*2; let p = "";
   for (let r=0;r<n;r++) for (let c=0;c<n;c++) if (q.isDark(r,c)) p += `M${c+m} ${r+m}h1v1h-1z`;
   const cs = n*7/46, cx = size/2 - cs/2, k = cs/32;
@@ -645,8 +649,13 @@ function ubsSheet(){
     <div class="oklist">${ok.map(b=>`<div><span style="color:var(--good)">✓ <span style="color:var(--fg)">${esc(b.creditor)}</span></span><span class="n">${chf(b.amount)}</span></div>`).join("")}
       ${bad.map(b=>`<div class="muted"><span>✕ ${esc(b.creditor)} – ${esc(payProblems(b)[0])}</span><span class="n">${chf(b.amount)}</span></div>`).join("")}</div>
     ${bad.length?`<p class="small muted" style="margin:0">Mit ✕ markierte kommen nicht in die Datei. Rechnung antippen → Bearbeiten, um die Angaben zu ergänzen.</p>`:""}
-    <button class="btn dark wide" id="ubs-make" ${ok.length?"":"disabled"}>${ICON.up} Datei für UBS speichern (${ok.length})</button>
+    <button class="btn dark wide" id="ubs-qr" ${ok.length?"":"disabled"}>${ICON.up} QR-Rechnungen als PDF (${ok.length})</button>
+    <p class="small muted" style="margin:0">Für jede Rechnung ein PDF mit QR-Code. Im UBS E-Banking am Computer: <b>Zahlungen</b> → <b>Hochladen</b> → PDFs ins Feld ziehen → prüfen → <b>Bezahlen</b>.</p>
+    <details><summary>Oder: eine Zahlungsdatei für alle (Filetransfer)</summary><div class="inner">
+    <button class="btn wide" id="ubs-make" ${ok.length?"":"disabled"}>${ICON.up} Zahlungsdatei speichern (${ok.length})</button>
+    <p class="small muted" style="margin:0">E-Banking am Computer: Zahlungen → Überweisen und Rechnungen zahlen → Neu erfassen → Filetransfer. Nicht bei jedem Vertrag verfügbar.</p></div></details>
     <div id="ubs-after" hidden><div style="display:flex;flex-direction:column;gap:12px">
+      <p style="margin:0"><b>Gespeichert.</b> Die Dateien liegen in deinen Downloads. Lade sie im UBS E-Banking hoch und gib die Zahlungen frei.</p>
       <ol class="steps">${IN_CLAUDE?`<li>Die Datei ist eine ZIP. Am PC doppelklicken, auf dem iPhone in «Dateien» antippen – darin liegt die XML-Datei.</li>`:`<li>Die XML-Datei liegt jetzt in deinen Downloads.</li>`}
       <li>Am Computer im UBS E-Banking: <b>Zahlungen</b> → <b>Überweisen und Rechnungen zahlen</b> → <b>Neu erfassen</b> → <b>Filetransfer</b> → XML-Datei hochladen. (In der UBS-App gibt es das nicht.)</li>
       <li>Unter «Erfasste Dateien» → «Aufträge anzeigen» kontrollieren und freigeben.</li></ol>
@@ -671,6 +680,76 @@ async function makeUbsFile(){
   if (!saved) return;
   bills.forEach(b => { b.sentAt = TODAY; b.execAt = execDate(b, st.settings.mode); saveBill(b); });
   $("#ubs-make").hidden = true; $("#ubs-after").hidden = false; render();
+}
+let pdfLibP = null;
+function loadPdfLib(){
+  if (window.PDFLib) return Promise.resolve();
+  if (!pdfLibP) pdfLibP = new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"; sc.onload = res; sc.onerror = () => { pdfLibP = null; rej(new Error("PDF-Baustein lädt nicht")); }; document.head.appendChild(sc); });
+  return pdfLibP;
+}
+// Eine A4-Seite mit Schweizer QR-Zahlteil (Empfangsschein 62 mm + Zahlteil 148 mm, Höhe 105 mm, QR 46×46 mm)
+async function qrBillPdf(b){
+  await loadPdfLib();
+  const {PDFDocument, StandardFonts, rgb} = PDFLib, mm = v => v * 72 / 25.4;
+  const doc = await PDFDocument.create(), pg = doc.addPage([mm(210), mm(297)]);
+  const F = await doc.embedFont(StandardFonts.Helvetica), FB = await doc.embedFont(StandardFonts.HelveticaBold);
+  const safe = t => String(t||"").replace(/[^\x20-\x7E\u00A0-\u00FF]/g, "?");
+  const txt = (t, x, yTop, size, bold) => pg.drawText(safe(t), {x: mm(x), y: mm(297 - yTop) - size*0.8, size, font: bold ? FB : F, color: rgb(0,0,0)});
+  const p = st.settings.payer || {};
+  // Kopf
+  txt("Zahlungsauftrag", 20, 25, 18, true);
+  txt(b.creditor, 20, 38, 12, true);
+  txt("Betrag CHF " + b.amount.toFixed(2) + "   ·   fällig " + fmtD(b.due) + (b.reminder ? "   ·   MAHNUNG" : ""), 20, 46, 11);
+  if (b.note) txt(b.note, 20, 53, 10);
+  txt("Erstellt mit dem Finanz-Organisator am " + fmtD(TODAY) + " aus den Daten der Original-Rechnung.", 20, 62, 8);
+  // Trennlinien
+  const top = 297 - 105;
+  pg.drawLine({start:{x:0, y:mm(105)}, end:{x:mm(210), y:mm(105)}, thickness:0.5, color:rgb(0,0,0), dashArray:[3,3]});
+  pg.drawLine({start:{x:mm(62), y:0}, end:{x:mm(62), y:mm(105)}, thickness:0.5, color:rgb(0,0,0), dashArray:[3,3]});
+  const addr = [b.creditor, [b.street, b.nr].filter(Boolean).join(" "), [b.zip, b.town].filter(Boolean).join(" ")].filter(Boolean);
+  const ref = refType(b) === "NON" ? "" : (refType(b) === "QRR" ? String(b.ref).replace(/\s/g,"").replace(/^(\d{2})(\d{5})(\d{5})(\d{5})(\d{5})(\d{5})$/, "$1 $2 $3 $4 $5 $6") : String(b.ref).replace(/\s/g,"").replace(/(.{4})/g,"$1 ").trim());
+  const payer = [p.name].filter(Boolean);
+  // Empfangsschein
+  let y = top + 5; txt("Empfangsschein", 5, y, 11, true); y += 7;
+  txt("Konto / Zahlbar an", 5, y, 6, true); y += 3; txt(fmtIban(b.iban), 5, y, 8); y += 3.5; addr.forEach(l => { txt(l, 5, y, 8); y += 3.5; });
+  if (ref){ y += 2; txt("Referenz", 5, y, 6, true); y += 3; txt(ref, 5, y, 8); y += 3.5; }
+  if (payer.length){ y += 2; txt("Zahlbar durch", 5, y, 6, true); y += 3; payer.forEach(l => { txt(l, 5, y, 8); y += 3.5; }); }
+  txt("Währung", 5, top + 68, 6, true); txt("Betrag", 18, top + 68, 6, true); txt("CHF", 5, top + 72, 8); txt(b.amount.toFixed(2), 18, top + 72, 8);
+  txt("Annahmestelle", 38, top + 82, 6, true);
+  // Zahlteil
+  txt("Zahlteil", 67, top + 5, 11, true);
+  const q = qrFor(b), n = q.getModuleCount(), qs = 46, mod = qs / n, qx = 67, qy = top + 17;
+  pg.drawRectangle({x: mm(qx), y: mm(297 - qy - qs), width: mm(qs), height: mm(qs), color: rgb(1,1,1)});
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c))
+    pg.drawRectangle({x: mm(qx + c*mod), y: mm(297 - qy - (r+1)*mod), width: mm(mod) + 0.05, height: mm(mod) + 0.05, color: rgb(0,0,0)});
+  const cs = 7, cx = qx + qs/2 - cs/2, cyT = qy + qs/2 - cs/2, k = cs/32;     // Schweizerkreuz 7×7 mm
+  const box = (x, yT, w, h, c) => pg.drawRectangle({x: mm(x), y: mm(297 - yT - h), width: mm(w), height: mm(h), color: c});
+  box(cx, cyT, cs, cs, rgb(1,1,1)); box(cx + 2*k, cyT + 2*k, cs - 4*k, cs - 4*k, rgb(0,0,0));
+  box(cx + 13*k, cyT + 8*k, 6*k, 16*k, rgb(1,1,1)); box(cx + 8*k, cyT + 13*k, 16*k, 6*k, rgb(1,1,1));
+  txt("Währung", 67, top + 68, 8, true); txt("Betrag", 84, top + 68, 8, true); txt("CHF", 67, top + 72, 10); txt(b.amount.toFixed(2), 84, top + 72, 10);
+  y = top + 5; const X = 118;
+  txt("Konto / Zahlbar an", X, y, 8, true); y += 4; txt(fmtIban(b.iban), X, y, 10); y += 4.5; addr.forEach(l => { txt(l, X, y, 10); y += 4.5; });
+  if (ref){ y += 3; txt("Referenz", X, y, 8, true); y += 4; txt(ref, X, y, 10); y += 4.5; }
+  const msg = (b.msg || "").slice(0, 60); if (msg){ y += 3; txt("Zusätzliche Informationen", X, y, 8, true); y += 4; txt(msg, X, y, 10); y += 4.5; }
+  if (payer.length){ y += 3; txt("Zahlbar durch", X, y, 8, true); y += 4; payer.forEach(l => { txt(l, X, y, 10); y += 4.5; }); }
+  return await doc.save();
+}
+async function qrPdfs(ids){
+  const bills = ids.map(id => st.bills[id]).filter(b => b && !payProblems(b).length);
+  if (!bills.length){ toast("Bei den ausgewählten Rechnungen fehlen noch Zahlungsangaben."); return 0; }
+  if (st.demo){ toast("Mit Beispieldaten erstelle ich keine Dateien."); return 0; }
+  busy("Erstelle QR-Rechnungen …", bills.length + (bills.length === 1 ? " Datei" : " Dateien"));
+  let ok = 0;
+  try{
+    for (const b of bills){
+      const bytes = await qrBillPdf(b);
+      const name = "QR-" + b.creditor.replace(/[^\wäöüÄÖÜ-]+/g, "-").replace(/-+/g, "-").slice(0, 30) + "-" + b.amount.toFixed(2) + ".pdf";
+      busy(null);
+      if (await saveFile(name, new Blob([bytes], {type: "application/pdf"}), "application/pdf")){ ok++; b.qrAt = TODAY; saveBill(b); }
+      await new Promise(r => setTimeout(r, 600));
+    }
+  }catch(e){ busy(null); toast((e && e.message) || "PDF konnte nicht erstellt werden."); }
+  busy(null); render(); return ok;
 }
 async function saveFile(name, data, mime){
   const dl = IN_CLAUDE ? await claude.use("downloads") : null;
@@ -1244,6 +1323,7 @@ document.addEventListener("click", async e => {
     if (D.act === "reopen"){ const b = st.bills[id]; b.status = "open"; delete b.paidAt; delete b.archiveMonth; saveBill(b); closeSheet(); render(); toast("Wieder offen"); }
     if (D.act === "edit") billForm(st.bills[id]);
     if (D.act === "qr") showQR(id);
+    if (D.act === "qrpdf"){ const n = await qrPdfs([id]); if (n) toast("QR-Rechnung gespeichert ✓ – im E-Banking unter Zahlungen → Hochladen"); }
     if (D.act === "page"){ pageFor = id; closeSheet(); $("#f-page").click(); }
     if (D.act === "ics") icsFor(id);
     if (D.act === "backup") doBackup();
@@ -1263,6 +1343,8 @@ document.addEventListener("click", async e => {
     case "sel-paid": markPaid([...ui.sel]); break;
     case "sel-ubs": ubsSheet(); break;
     case "ubs-make": makeUbsFile(); break;
+    case "ubs-qr": { const ids = [...ui.sel]; const n = await qrPdfs(ids); if (n){ ids.forEach(id => { const b = st.bills[id]; if (b && b.qrAt === TODAY){ b.sentAt = TODAY; saveBill(b); } });
+      const a = $("#ubs-after"); if (a){ $("#ubs-qr").hidden = true; a.hidden = false; } toast(n + (n===1 ? " QR-Rechnung" : " QR-Rechnungen") + " gespeichert ✓"); } break; }
     case "ubs-done": { const ids = [...ui.sel].filter(id => st.bills[id] && st.bills[id].sentAt === TODAY); closeSheet(); markPaid(ids); break; }
     case "settings": settingsSheet(); break;
     case "ai-go": askAdvisor(); break;
