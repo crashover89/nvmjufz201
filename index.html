@@ -238,7 +238,7 @@ details .inner{display:flex;flex-direction:column;gap:10px}
 <script>
 "use strict";
 const IN_CLAUDE = !!(window.claude && window.claude.use);
-const APP_VERSION = "9";
+const APP_VERSION = "12";
 if (!IN_CLAUDE){
   try{ const l = document.createElement("link"); l.rel = "manifest"; l.href = "manifest.webmanifest"; document.head.appendChild(l);
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(()=>{}); }catch(e){}
@@ -349,7 +349,7 @@ const KW = [
 ];
 function guessCat(text, isCredit){
   const t = String(text||"");
-  if (/kontoübertrag|kontouebertrag|umbuchung|\bu\/o\b/i.test(t)) return "Umbuchung";
+  if (/kontoübertrag|kontouebertrag|umbuchung/i.test(t)) return "Umbuchung";
   if (isCredit) return "Einnahmen";
   for (const r of st.settings.rules) if (r.m && t.toLowerCase().includes(r.m)) return r.c;
   for (const [re,c] of KW) if (re.test(t)) return c;
@@ -1069,7 +1069,10 @@ async function importFiles(files){
     for (const x of res.tx){
       if (!x.date) continue; x.src = res.src;
       const k = monKey(x.date), m = (st.months[k] ||= {items:[]});
-      if (m.items.some(y => y.id === x.id)){ dup++; continue; }
+      const same = m.items.find(y => y.id === x.id);
+      if (same){ // gleiche Buchung nochmals geladen: Texte auffrischen (z. B. neu erkannte Umbuchung), eigene Kategorie behalten
+        if (same.text !== x.text || same.name !== x.name){ Object.assign(same, {name:x.name, text:x.text, ref:x.ref, acct:x.acct}); touched.add(k); }
+        dup++; continue; }
       if (x.ref && m.items.some(y => y.ref && y.ref === x.ref && y.amt === x.amt && y.src !== x.src)){ dup++; continue; }
       const key = x.date + "|" + x.amt; seenKey[key] = (seenKey[key] || 0) + 1;
       const other = m.items.filter(y => y.src && y.src !== x.src && y.date === x.date && y.amt === x.amt && (!y.acct || !x.acct || y.acct === x.acct)).length;
@@ -1098,7 +1101,10 @@ function viewKonto(){
   const inc = items.filter(t=>t.amt>0 && !isTransfer(t)).reduce((s,t)=>s+t.amt,0), out = -items.filter(t=>t.amt<0 && !isTransfer(t)).reduce((s,t)=>s+t.amt,0);
   const bal = balance(), balDate = Object.values(st.settings.balances||{}).map(b=>b.date).sort().pop();
   const cats = Object.entries(catTotals(items)).sort((a,b)=>b[1]-a[1]), max = cats.length ? cats[0][1] : 1;
-  h += `${bal!==null?`<section class="hero" style="background:var(--fg);color:var(--bg)"><span class="lbl">Kontostand per ${fmtD(balDate)}</span><span class="big n">${chf(bal)}</span></section>`:""}
+  const accs = Object.entries(st.settings.balances || {});
+  const accName = k => k === "Beispielkonto" ? k : (st.settings.accNames && st.settings.accNames[k]) || ("Konto …" + k.replace(/\s/g,"").slice(-6));
+  h += `${bal!==null?`<section class="hero" style="background:var(--fg);color:var(--bg)"><span class="lbl">${accs.length>1?"Kontostand total ("+accs.length+" Konten)":"Kontostand per "+fmtD(balDate)}</span><span class="big n">${chf(bal)}</span>
+    ${accs.length>1?`<div style="display:flex;flex-direction:column;gap:2px;margin-top:8px;font-size:.88rem">${accs.map(([k,v])=>`<div style="display:flex;justify-content:space-between;gap:12px"><span>${esc(accName(k))} <span style="opacity:.7">· ${fmtDs(v.date)}</span></span><span class="n">${chf(v.amt)}</span></div>`).join("")}</div>`:""}</section>`:""}
   <div class="card">
     <div class="monthnav"><button class="iconbtn" data-mon="-1" ${k===ks[0]?"disabled":""} aria-label="Vormonat">‹</button><b>${monName(k)}</b><button class="iconbtn" data-mon="1" ${k===ks[ks.length-1]?"disabled":""} aria-label="Nächster Monat">›</button></div>
     <div class="trio"><div><span class="small muted">Rein</span><span class="v n" style="color:var(--good)">${chf0(inc)}</span></div><div><span class="small muted">Raus</span><span class="v n">${chf0(out)}</span></div><div><span class="small muted">Übrig</span><span class="v n" style="color:${inc-out<0?"var(--bad)":"var(--fg)"}">${(inc-out<0?"−":"")+chf0(Math.abs(inc-out))}</span></div></div>
@@ -1152,7 +1158,11 @@ function analyse(){
   const interest = -yearTx.filter(t => t.amt < 0 && /zinsabschluss/i.test(t.name + " " + t.text)).reduce((s,t)=>s+t.amt,0);
   if (bal !== null && bal < 0) add("Konto im Minus", `Kontostand ${chf(bal)}. Für das Minus verrechnet die Bank Zins` + (interest > 0 ? ` – in den letzten 12 Monaten ${chf0(interest)}.` : ".") + " Erst das Konto ausgleichen, dann sparen.", interest, 0);
   const cred = avg["Kredite / Raten"]||0;
-  if (cred > 50) add("Kreditkarten & Ratenzahlungen", `Im Schnitt ${chf0(cred)} pro Monat an Swisscard, Viseca, PayRed, Klarna & Co. Raten und offene Kreditkarten-Saldi kosten oft 10–14 % Zins. Neue Käufe lieber direkt bezahlen.`, cred*0.12*12, 0);
+  if (cred > 50){
+    const per = {}; win.filter(t => t.amt < 0 && txCat(t) === "Kredite / Raten").forEach(t => { const k = (t.name||"").replace(/\*.*$/,"").replace(/\s+(AG|GmbH|SA|AECS).*$/i,"").trim(); per[k] = (per[k]||0) - t.amt/nM; });
+    const top = Object.entries(per).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([k,v]) => k + " " + chf0(v)).join(", ");
+    add("Kreditkarten & Ratenzahlungen", `Im Schnitt ${chf0(cred)} pro Monat (${top}). Die einzelnen Kreditkarten-Käufe siehst du hier nicht, nur die Monatsrechnung. Wird eine Rechnung nicht ganz bezahlt oder in Raten, kostet der Rest meist 10–14 % Zins.`, 0, 1);
+  }
   const rem = openBills().filter(b => b.reminder); if (rem.length) add("Mahnungen zuerst zahlen", `${rem.map(b=>b.creditor).join(", ")} – sonst kommen Mahngebühren dazu.`, rem.length*30, 0);
   tips.sort((a,b)=>a.sev-b.sev || b.save-a.save);
   return {avg, income, spend, rec, tips, nM};
