@@ -174,6 +174,7 @@ details .inner{display:flex;flex-direction:column;gap:10px}
 .radio{display:flex;flex-direction:column;gap:8px}
 .radio label{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:12px;padding:12px;cursor:pointer}
 .radio input{margin-top:3px;accent-color:var(--accent);width:18px;height:18px;flex:none}
+.cp{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:3px 12px;font-size:.78rem;font-weight:700;color:var(--accent);vertical-align:middle;white-space:nowrap}
 .toast{position:fixed;left:50%;transform:translateX(-50%);top:calc(14px + env(safe-area-inset-top,0px));z-index:30;background:var(--fg);color:var(--bg);padding:11px 18px;border-radius:99px;font-size:.9rem;font-weight:600;max-width:calc(100% - 32px);text-align:center}
 .live{position:fixed;inset:0;z-index:36;background:#000;display:flex;flex-direction:column}
 .live video{flex:1;width:100%;height:100%;object-fit:cover;min-height:0}
@@ -238,7 +239,7 @@ details .inner{display:flex;flex-direction:column;gap:10px}
 <script>
 "use strict";
 const IN_CLAUDE = !!(window.claude && window.claude.use);
-const APP_VERSION = "12";
+const APP_VERSION = "13";
 if (!IN_CLAUDE){
   try{ const l = document.createElement("link"); l.rel = "manifest"; l.href = "manifest.webmanifest"; document.head.appendChild(l);
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(()=>{}); }catch(e){}
@@ -544,11 +545,11 @@ function closeSheet(){ $("#overlay").hidden = true; $("#sheet").innerHTML = ""; 
 function showBill(id){
   const b = st.bills[id]; if (!b) return; const s = billState(b), probs = payProblems(b), open = b.status === "open";
   openSheet(`<div><div class="muted small">${esc(b.cat||"")}${b.note?" · "+esc(b.note):""}</div><h2>${esc(b.creditor)}</h2></div>
-    <div class="bigamt n">${chf(b.amount)}</div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><div class="bigamt n">${chf(b.amount)}</div>${open?`<button class="cp" data-copy="${b.amount.toFixed(2)}" aria-label="Betrag kopieren">Kopieren</button>`:""}</div>
     <div class="kv"><span>Fällig</span><span>${wd(b.due)} ${fmtD(b.due)} ${open?`<span class="tag t-${s.k}">${s.label}</span>`:""}</span>
       ${open && s.rank>1?`<span>Spätestens zahlen</span><span>${wd(latestPayDay(b.due))} ${fmtD(latestPayDay(b.due))}</span>`:""}
-      ${b.iban?`<span>Konto</span><span class="n">${esc(fmtIban(b.iban))}</span>`:""}
-      ${b.ref?`<span>Referenz</span><span class="n" style="word-break:break-all;white-space:normal">${esc(b.ref)}</span>`:""}
+      ${b.iban?`<span>Konto</span><span class="n" style="white-space:normal">${esc(fmtIban(b.iban))} ${open?`<button class="cp" data-copy="${esc(cleanIban(b.iban))}" aria-label="IBAN kopieren">Kopieren</button>`:""}</span>`:""}
+      ${b.ref?`<span>Referenz</span><span class="n" style="word-break:break-all;white-space:normal">${esc(b.ref)} ${open?`<button class="cp" data-copy="${esc(String(b.ref).replace(/\s/g,""))}" aria-label="Referenz kopieren">Kopieren</button>`:""}</span>`:""}
       ${b.town?`<span>Adresse</span><span>${esc([[b.street,b.nr].filter(Boolean).join(" "), [b.zip,b.town].filter(Boolean).join(" ")].filter(Boolean).join(", "))}</span>`:""}
       ${b.sentAt?`<span>An UBS</span><span>übergeben ${fmtD(b.sentAt)}${b.execAt?", Ausführung "+fmtD(b.execAt):""}</span>`:""}
       ${b.paidAt?`<span>Bezahlt</span><span>${fmtD(b.paidAt)}</span>`:""}</div>
@@ -647,8 +648,8 @@ function ubsSheet(){
     <button class="btn dark wide" id="ubs-make" ${ok.length?"":"disabled"}>${ICON.up} Datei für UBS speichern (${ok.length})</button>
     <div id="ubs-after" hidden><div style="display:flex;flex-direction:column;gap:12px">
       <ol class="steps">${IN_CLAUDE?`<li>Die Datei ist eine ZIP. Am PC doppelklicken, auf dem iPhone in «Dateien» antippen – darin liegt die XML-Datei.</li>`:`<li>Die XML-Datei liegt jetzt in deinen Downloads.</li>`}
-      <li>UBS E-Banking → <b>Zahlungen</b> → <b>Datei übermitteln</b> → XML-Datei hochladen.</li>
-      <li>Unter «Pendente Zahlungen» kontrollieren und freigeben.</li></ol>
+      <li>Am Computer im UBS E-Banking: <b>Zahlungen</b> → <b>Überweisen und Rechnungen zahlen</b> → <b>Neu erfassen</b> → <b>Filetransfer</b> → XML-Datei hochladen. (In der UBS-App gibt es das nicht.)</li>
+      <li>Unter «Erfasste Dateien» → «Aufträge anzeigen» kontrollieren und freigeben.</li></ol>
       <button class="btn primary wide" id="ubs-done">${ICON.check} In UBS freigegeben – als bezahlt ablegen</button>
       <button class="btn wide" data-act="close">Später</button>
     </div></div>`);
@@ -1228,6 +1229,11 @@ document.addEventListener("click", async e => {
   if (D.sel){ ui.sel.has(D.sel) ? ui.sel.delete(D.sel) : ui.sel.add(D.sel); render(); return; }
   if (D.open){ showBill(D.open); return; }
   if (D.tx){ const tx = (st.months[D.tm].items||[]).find(x => x.id === D.tx); if (tx) txForm(tx); return; }
+  if (D.copy !== undefined){
+    const val = D.copy;
+    try{ await navigator.clipboard.writeText(val); toast("Kopiert ✓ – jetzt in der UBS-App einfügen"); }
+    catch(e){ toast("Kopieren ging nicht – bitte lange auf den Text tippen"); }
+    return; }
   if (D.qd){ const i = $("#q-due"); if (i) i.value = addDays(TODAY, +D.qd); return; }
   if (D.mon){ const ks = monthsWithData(), i = ks.indexOf(ui.month) + (+D.mon); if (ks[i]){ ui.month = ks[i]; render(); } return; }
   if (D.dec){ const k = D.dec; if (st.settings.decisions[k] === D.v) delete st.settings.decisions[k]; else st.settings.decisions[k] = D.v; saveSettings(); render(); return; }
