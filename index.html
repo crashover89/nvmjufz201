@@ -238,7 +238,7 @@ details .inner{display:flex;flex-direction:column;gap:10px}
 <script>
 "use strict";
 const IN_CLAUDE = !!(window.claude && window.claude.use);
-const APP_VERSION = "8";
+const APP_VERSION = "9";
 if (!IN_CLAUDE){
   try{ const l = document.createElement("link"); l.rel = "manifest"; l.href = "manifest.webmanifest"; document.head.appendChild(l);
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(()=>{}); }catch(e){}
@@ -1047,7 +1047,14 @@ async function importFiles(files){
   const texts = [];
   for (const f of files){
     try{
-      if (/\.zip$/i.test(f.name) || f.type.includes("zip")){ const z = await JSZip.loadAsync(f); for (const e of Object.values(z.files)) if (!e.dir && /\.xml$/i.test(e.name)) texts.push([e.name, await e.async("string")]); }
+      if (/\.zip$/i.test(f.name) || f.type.includes("zip")){
+        // UBS liefert mehrere Dokumente als ZIP – darin können auch weitere ZIPs liegen
+        const walk = async (data, depth) => { const z = await JSZip.loadAsync(data);
+          for (const e of Object.values(z.files)){ if (e.dir) continue;
+            if (/\.xml$/i.test(e.name)) texts.push([e.name, await e.async("string")]);
+            else if (/\.zip$/i.test(e.name) && depth < 3) await walk(await e.async("arraybuffer"), depth + 1); } };
+        await walk(f, 0);
+      }
       else texts.push([f.name, await f.text()]);
     }catch(e){ toast(`«${f.name}» konnte nicht geöffnet werden.`); }
   }
